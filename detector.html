@@ -1,7 +1,220 @@
 // 이 스크립트로 웹 브라우저가 AI 모델을 실행할 수 있게 됩니다.
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0/dist/tf.min.js"></script>
 // 이 함수가 변환된 모델 파일을 로드합니다.
-model = await tf.loadLayersModel('tfjs_model/model.json');
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실시간 감정 인식기 (TensorFlow.js)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- TensorFlow.js CDN (모델 로딩 및 추론용) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0/dist/tf.min.js"></script>
+    <style>
+        /* Inter 폰트 사용 */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f4f7f9;
+        }
+        .container {
+            max-width: 90%;
+            margin: auto;
+        }
+        .camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 640px; /* 웹캠 최대 너비 */
+            margin: 0 auto;
+        }
+        #webcam {
+            width: 100%;
+            height: auto;
+            border-radius: 0.75rem; /* rounded-xl */
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
+        }
+        #overlayCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <div class="container bg-white p-6 rounded-2xl shadow-2xl">
+        <h1 class="text-3xl font-bold text-gray-800 mb-4 text-center">
+            실시간 감정 인식 웹 앱
+        </h1>
+        <p class="text-sm text-gray-600 mb-6 text-center">
+            훈련된 모델을 로드하여 웹캠을 통해 얼굴 감정과 분석을 수행합니다.
+        </p>
+
+        <!-- 카메라 및 오버레이 컨테이너 -->
+        <div class="camera-container mb-6">
+            <video id="webcam" playsinline autoplay muted></video>
+            <canvas id="overlayCanvas"></canvas>
+        </div>
+
+        <!-- 모델 상태 및 예측 결과 -->
+        <div id="status" class="mb-4 p-3 rounded-lg text-center font-medium bg-blue-100 text-blue-700">
+            모델 로딩 중...
+        </div>
+
+        <div class="p-4 bg-gray-50 rounded-lg shadow-inner">
+            <h2 class="text-xl font-semibold mb-2 text-gray-700">실시간 예측 결과</h2>
+            <div id="prediction" class="text-2xl font-extrabold text-indigo-600">
+                얼굴을 중앙에 배치해 주세요.
+            </div>
+            <div id="confidence" class="text-sm text-gray-500 mt-1">
+                신뢰도: N/A
+            </div>
+            <div id="fps" class="text-xs text-gray-400 mt-2">
+                FPS: N/A
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM 요소 정의
+        const video = document.getElementById('webcam');
+        const overlayCanvas = document.getElementById('overlayCanvas');
+        const ctx = overlayCanvas.getContext('2d');
+        const statusElement = document.getElementById('status');
+        const predictionElement = document.getElementById('prediction');
+        const confidenceElement = document.getElementById('confidence');
+        const fpsElement = document.getElementById('fps');
+        
+        let model = null;
+        let lastTime = performance.now();
+        
+        // --- 1. 감정 레이블 정의 (train_emotion_model.py의 class_indices와 일치) ---
+        const EMOTIONS = [
+            'Angry (분노)', 'Disgust (혐오)', 'Fear (두려움)', 'Happy (행복)', 
+            'Sad (슬픔)', 'Surprise (놀람)', 'Neutral (중립)'
+        ];
+
+        // --- 2. 모델 로드 ---
+        async function loadModel() {
+            statusElement.textContent = "모델 로딩 중: tfjs_model/model.json";
+            try {
+                // 주의: emotion_model.h5 파일을 다음 명령어를 통해 TF.js 형식으로 변환해야 합니다.
+                // 1) pip install tensorflowjs
+                // 2) tensorflowjs_converter --input_format keras emotion_model.h5 tfjs_model
+                model = await tf.loadLayersModel('tfjs_model/model.json');
+                statusElement.textContent = "✅ 모델 로드 성공! 웹캠을 켜는 중...";
+                statusElement.classList.remove('bg-blue-100');
+                statusElement.classList.add('bg-green-100', 'text-green-700');
+                startWebcam();
+            } catch (error) {
+                console.error("모델 로드 실패:", error);
+                statusElement.textContent = "❌ 모델 로드 실패. 'tfjs_model' 폴더가 있는지, 모델 변환이 완료되었는지 확인하세요.";
+                statusElement.classList.remove('bg-blue-100');
+                statusElement.classList.add('bg-red-100', 'text-red-700');
+            }
+        }
+
+        // --- 3. 웹캠 스트림 시작 ---
+        function startWebcam() {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                // 모바일 환경을 고려하여 640x480으로 설정
+                navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+                    .then(stream => {
+                        video.srcObject = stream;
+                        video.onloadedmetadata = () => {
+                            video.play();
+                            overlayCanvas.width = video.videoWidth;
+                            overlayCanvas.height = video.videoHeight;
+                            requestAnimationFrame(runDetection);
+                        };
+                    })
+                    .catch(err => {
+                        console.error("웹캠 접근 오류:", err);
+                        statusElement.textContent = "❌ 웹캠 접근 권한이 필요합니다.";
+                    });
+            } else {
+                statusElement.textContent = "❌ 브라우저가 getUserMedia를 지원하지 않습니다.";
+            }
+        }
+
+        // --- 4. 실시간 감정 인식 루프 ---
+        async function runDetection() {
+            if (video.paused || video.ended || !model) {
+                return;
+            }
+
+            // FPS 계산
+            const currentTime = performance.now();
+            const elapsed = currentTime - lastTime;
+            const fps = (1000 / elapsed).toFixed(1);
+            lastTime = currentTime;
+            fpsElement.textContent = `FPS: ${fps}`;
+
+            // 캔버스에 웹캠 프레임 그리기
+            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            ctx.drawImage(video, 0, 0, overlayCanvas.width, overlayCanvas.height);
+
+            // ⚠️ 주의: 이 단계에서는 간단화를 위해 얼굴 검출(Face Detection) 없이 전체 프레임을 처리합니다.
+            // 실제 사용을 위해서는 Face-api.js 또는 MTCNN 구현이 필요합니다.
+
+            // --- 감정 분석 ---
+            tf.tidy(() => {
+                // 1. 이미지 전처리: 48x48 흑백, 정규화
+                const tensor = tf.browser.fromPixels(overlayCanvas)
+                    .mean(2) // 흑백 변환 (RGB 평균)
+                    .expandDims(2) // 채널 차원 (48, 48, 1) 추가
+                    .resizeBilinear([48, 48]) // 48x48로 리사이즈
+                    .expandDims(0) // 배치 차원 (1, 48, 48, 1) 추가
+                    .div(255.0); // 픽셀 정규화
+                
+                // 2. 예측
+                const predictions = model.predict(tensor);
+                
+                // 3. 결과 해석
+                const scores = predictions.dataSync();
+                const predictedClass = predictions.argMax(-1).dataSync()[0];
+                const maxConfidence = scores[predictedClass];
+                
+                // 4. UI 업데이트
+                predictionElement.textContent = EMOTIONS[predictedClass];
+                confidenceElement.textContent = `신뢰도: ${(maxConfidence * 100).toFixed(2)}%`;
+                
+                // 5. 시각화 (임의의 얼굴 위치에 경계 상자 표시 - 검출기 없으므로 중앙 가정)
+                drawPredictionBox(predictedClass, maxConfidence);
+            });
+
+            // 다음 프레임 요청
+            requestAnimationFrame(runDetection);
+        }
+
+        // --- 5. 예측 결과 시각화 (임의의 중앙 박스) ---
+        function drawPredictionBox(predictedClass, confidence) {
+            const size = Math.min(overlayCanvas.width, overlayCanvas.height) * 0.5;
+            const x = (overlayCanvas.width - size) / 2;
+            const y = (overlayCanvas.height - size) / 2;
+            const emotionName = EMOTIONS[predictedClass];
+
+            // 경계 상자
+            ctx.strokeStyle = (confidence > 0.5) ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 165, 0, 0.8)';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x, y, size, size);
+
+            // 감정 텍스트 배경
+            ctx.fillStyle = ctx.strokeStyle;
+            ctx.fillRect(x, y - 30, size, 30);
+
+            // 감정 텍스트
+            ctx.fillStyle = 'white';
+            ctx.font = '20px Inter';
+            ctx.fillText(emotionName, x + 5, y - 8);
+        }
+
+        // --- 초기화 ---
+        window.onload = loadModel;
+    </script>
+</body>
+</html>model = await tf.loadLayersModel('tfjs_model/model.json');
 // 웹캠을 켜고 스트림을 비디오 요소에 연결합니다.
 navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
 // ...
