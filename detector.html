@@ -105,8 +105,8 @@
         ];
         
         // --- 2. 7-클래스를 3-카테고리로 매핑 및 피드백 정의 ---
-        // 0.7 미만 신뢰도는 'Unknown'으로 처리되어 강제적인 '중립' 분류를 막습니다.
-        const CONFIDENCE_THRESHOLD = 0.70; 
+        // 0.50 미만 신뢰도는 'Unknown'으로 처리되어 강제적인 '중립' 분류를 막습니다. (기존 0.70에서 수정)
+        const CONFIDENCE_THRESHOLD = 0.50; 
 
         const CATEGORY_MAP = {
             'Happy': { label: '😊 긍정 (Positive)', category: 'positive', feedback: '매우 좋습니다! 지금처럼 긍정적인 상태를 유지하며 집중하세요.', color: '#10B981' },
