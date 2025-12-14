@@ -1,58 +1,56 @@
-// 이 스크립트로 웹 브라우저가 AI 모델을 실행할 수 있게 됩니다.
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0/dist/tf.min.js"></script>
-// 이 함수가 변환된 모델 파일을 로드합니다.
 <!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>실시간 감정 인식기 (TensorFlow.js)</title>
+    <title>실시간 감정 분석 및 피드백 시스템</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- TensorFlow.js CDN (모델 로딩 및 추론용) -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0/dist/tf.min.js"></script>
     <style>
-        /* Inter 폰트 사용 */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f4f7f9;
-        }
-        .container {
-            max-width: 90%;
-            margin: auto;
-        }
-        .camera-container {
-            position: relative;
-            width: 100%;
-            max-width: 640px; /* 웹캠 최대 너비 */
-            margin: 0 auto;
-        }
-        #webcam {
-            width: 100%;
-            height: auto;
-            border-radius: 0.75rem; /* rounded-xl */
-            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
-        }
-        #overlayCanvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-        }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f4f7f9; }
+        .container { max-width: 90%; margin: auto; }
+        .camera-container { position: relative; width: 100%; max-width: 640px; margin: 0 auto; }
+        #webcam { width: 100%; height: auto; border-radius: 0.75rem; box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1); }
+        #overlayCanvas { position: absolute; top: 0; left: 0; }
+        /* 감정 카테고리별 색상 설정 */
+        .positive { background-color: #d1fae5; color: #059669; }
+        .negative { background-color: #fee2e2; color: #dc2626; }
+        .neutral { background-color: #e0f2fe; color: #0ea5e9; }
+        .unknown { background-color: #e5e7eb; color: #6b7280; }
+        .camera-active { border: 4px solid #10b981; }
+        .camera-inactive { border: 4px solid #f87171; }
     </style>
 </head>
 <body class="p-4 sm:p-8">
 
     <div class="container bg-white p-6 rounded-2xl shadow-2xl">
         <h1 class="text-3xl font-bold text-gray-800 mb-4 text-center">
-            실시간 감정 인식 웹 앱
+            감정 기반 학습 피드백 시스템
         </h1>
         <p class="text-sm text-gray-600 mb-6 text-center">
-            훈련된 모델을 로드하여 웹캠을 통해 얼굴 감정과 분석을 수행합니다.
+            AI 모델을 통해 학습자의 감정을 분석하고 진동/음향 피드백을 제공합니다.
         </p>
 
+        <!-- 카메라 설정 입력 필드 -->
+        <div class="mb-6 p-4 border rounded-lg bg-gray-50">
+            <label class="block text-sm font-medium text-gray-700 mb-1">카메라 소스 설정</label>
+            <div class="flex space-x-2">
+                <input type="text" id="cameraUrl" placeholder="IP 카메라 URL (예: http://192.168.1.100/stream)" 
+                       class="flex-grow p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm">
+                <button id="startStopBtn" class="px-4 py-2 text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition duration-150 text-sm font-semibold">
+                    내장 카메라 시작
+                </button>
+            </div>
+            <p class="text-xs text-red-500 mt-2">
+                *주의: IP 카메라 사용 시, GitHub Pages(HTTPS)에서는 보안 문제로 작동하지 않을 수 있습니다. 로컬 서버(HTTP)에서 실행해 보세요.
+            </p>
+        </div>
+
         <!-- 카메라 및 오버레이 컨테이너 -->
-        <div class="camera-container mb-6">
+        <div class="camera-container mb-6 camera-inactive" id="videoWrapper">
             <video id="webcam" playsinline autoplay muted></video>
             <canvas id="overlayCanvas"></canvas>
         </div>
@@ -63,15 +61,19 @@
         </div>
 
         <div class="p-4 bg-gray-50 rounded-lg shadow-inner">
-            <h2 class="text-xl font-semibold mb-2 text-gray-700">실시간 예측 결과</h2>
-            <div id="prediction" class="text-2xl font-extrabold text-indigo-600">
-                얼굴을 중앙에 배치해 주세요.
+            <h2 class="text-xl font-semibold mb-2 text-gray-700">분류된 감정 카테고리</h2>
+            <div id="category-prediction" class="text-3xl font-extrabold mb-3 text-center transition-colors duration-500 rounded-lg p-3 unknown">
+                카메라를 시작해주세요.
             </div>
-            <div id="confidence" class="text-sm text-gray-500 mt-1">
-                신뢰도: N/A
+            
+            <h2 class="text-xl font-semibold mt-4 mb-2 text-gray-700">맞춤 피드백 및 알림</h2>
+            <div id="feedback" class="text-lg text-gray-700 p-3 border-l-4 border-indigo-400 pl-4 rounded-md bg-white shadow-sm">
+                감정 분석이 시작되면 여기에 피드백이 표시됩니다.
             </div>
-            <div id="fps" class="text-xs text-gray-400 mt-2">
-                FPS: N/A
+
+            <div class="text-sm text-gray-500 mt-4 flex justify-between">
+                <span id="confidence">신뢰도: N/A</span>
+                <span id="fps">FPS: N/A</span>
             </div>
         </div>
     </div>
@@ -82,65 +84,173 @@
         const overlayCanvas = document.getElementById('overlayCanvas');
         const ctx = overlayCanvas.getContext('2d');
         const statusElement = document.getElementById('status');
-        const predictionElement = document.getElementById('prediction');
+        const categoryPredictionElement = document.getElementById('category-prediction');
+        const feedbackElement = document.getElementById('feedback');
         const confidenceElement = document.getElementById('confidence');
         const fpsElement = document.getElementById('fps');
+        const cameraUrlInput = document.getElementById('cameraUrl');
+        const startStopBtn = document.getElementById('startStopBtn');
+        const videoWrapper = document.getElementById('videoWrapper');
         
         let model = null;
         let lastTime = performance.now();
-        
-        // --- 1. 감정 레이블 정의 (train_emotion_model.py의 class_indices와 일치) ---
-        const EMOTIONS = [
-            'Angry (분노)', 'Disgust (혐오)', 'Fear (두려움)', 'Happy (행복)', 
-            'Sad (슬픔)', 'Surprise (놀람)', 'Neutral (중립)'
-        ];
+        let animationFrameId = null;
+        let isCameraActive = false;
+        let lastCategory = 'Unknown'; // 진동/음향 피드백을 위한 상태 추적
 
-        // --- 2. 모델 로드 ---
+        // --- 1. 7-클래스 감정 레이블 정의 ---
+        const EMOTIONS_7_CLASS = [
+            'Angry', 'Disgust', 'Fear', 'Happy', 
+            'Sad', 'Surprise', 'Neutral'
+        ];
+        
+        // --- 2. 7-클래스를 3-카테고리로 매핑 및 피드백 정의 ---
+        // 0.7 미만 신뢰도는 'Unknown'으로 처리되어 강제적인 '중립' 분류를 막습니다.
+        const CONFIDENCE_THRESHOLD = 0.70; 
+
+        const CATEGORY_MAP = {
+            'Happy': { label: '😊 긍정 (Positive)', category: 'positive', feedback: '매우 좋습니다! 지금처럼 긍정적인 상태를 유지하며 집중하세요.', color: '#10B981' },
+            'Surprise': { label: '😊 긍정 (Positive)', category: 'positive', feedback: '놀라움은 긍정적인 흥미의 신호일 수 있습니다. 학습에 열중하고 계시군요!', color: '#10B981' },
+            'Neutral': { label: '🧘 중립 (Neutral)', category: 'neutral', feedback: '편안하고 집중된 상태입니다. 현재 상태가 학습에 가장 효율적일 수 있습니다.', color: '#0EA5E9' },
+            'Angry': { label: '😥 부정 (Negative)', category: 'negative', feedback: '부정적 감정 신호! 잠시 멈추고 심호흡을 하거나 5분간 휴식을 취하세요. (알림: 🔔🚨)', color: '#DC2626' },
+            'Disgust': { label: '😥 부정 (Negative)', category: 'negative', feedback: '부정적 감정 신호! 환경이나 내용에 대한 불만족 신호입니다. 자리를 바꿔보세요.', color: '#DC2626' },
+            'Fear': { label: '😥 부정 (Negative)', 'category': 'negative', feedback: '부정적 감정 신호! 불안감을 느끼고 있습니다. 너무 어렵다면 쉬운 내용부터 다시 시작해 보세요.', color: '#DC2626' },
+            'Sad': { label: '😥 부정 (Negative)', category: 'negative', feedback: '부정적 감정 신호! 잠시 쉬어가는 시간을 갖는 건 어떨까요?', color: '#DC2626' }
+        };
+
+        // --- 3. 피드백 (진동 & 음향) 기능 ---
+        function playNegativeFeedback() {
+            // A. 진동 피드백 (모바일 기기에서만 작동)
+            if (navigator.vibrate) {
+                // 짧게 3번 진동 (100ms on, 50ms off)
+                navigator.vibrate([100, 50, 100, 50, 100]);
+            }
+            
+            // B. 음향 피드백 (Web Audio API - 순수 JavaScript로 생성)
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.type = 'sine'; // 사인파 (부드러운 소리)
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // 440 Hz (라 음)
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime); // 볼륨 50%
+            
+            oscillator.start();
+            
+            // 0.3초 후에 소리 끄기
+            setTimeout(() => {
+                oscillator.stop();
+            }, 300);
+        }
+
+        // --- 4. 모델 로드 ---
         async function loadModel() {
             statusElement.textContent = "모델 로딩 중: tfjs_model/model.json";
             try {
-                // 주의: emotion_model.h5 파일을 다음 명령어를 통해 TF.js 형식으로 변환해야 합니다.
-                // 1) pip install tensorflowjs
-                // 2) tensorflowjs_converter --input_format keras emotion_model.h5 tfjs_model
                 model = await tf.loadLayersModel('tfjs_model/model.json');
-                statusElement.textContent = "✅ 모델 로드 성공! 웹캠을 켜는 중...";
+                statusElement.textContent = "✅ 모델 로드 성공! 카메라를 시작해 주세요.";
                 statusElement.classList.remove('bg-blue-100');
                 statusElement.classList.add('bg-green-100', 'text-green-700');
-                startWebcam();
             } catch (error) {
                 console.error("모델 로드 실패:", error);
-                statusElement.textContent = "❌ 모델 로드 실패. 'tfjs_model' 폴더가 있는지, 모델 변환이 완료되었는지 확인하세요.";
+                statusElement.textContent = "❌ 모델 로드 실패. 'tfjs_model' 폴더와 model.json 경로를 확인하세요.";
                 statusElement.classList.remove('bg-blue-100');
                 statusElement.classList.add('bg-red-100', 'text-red-700');
             }
         }
 
-        // --- 3. 웹캠 스트림 시작 ---
-        function startWebcam() {
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                // 모바일 환경을 고려하여 640x480으로 설정
-                navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
-                    .then(stream => {
-                        video.srcObject = stream;
-                        video.onloadedmetadata = () => {
-                            video.play();
-                            overlayCanvas.width = video.videoWidth;
-                            overlayCanvas.height = video.videoHeight;
-                            requestAnimationFrame(runDetection);
-                        };
-                    })
-                    .catch(err => {
-                        console.error("웹캠 접근 오류:", err);
-                        statusElement.textContent = "❌ 웹캠 접근 권한이 필요합니다.";
-                    });
+        // --- 5. 카메라 스트림 시작/중지 토글 ---
+        function toggleCameraStream() {
+            if (isCameraActive) {
+                stopStream();
             } else {
-                statusElement.textContent = "❌ 브라우저가 getUserMedia를 지원하지 않습니다.";
+                const url = cameraUrlInput.value.trim();
+                if (url) {
+                    startStreamFromUrl(url); // IP 카메라 URL 사용
+                } else {
+                    startInternalWebcam(); // 내장 카메라 사용
+                }
             }
         }
+        
+        function stopStream() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+            } else if (video.src) {
+                video.src = ''; // IP 카메라 이미지 스트림 중지
+            }
+            isCameraActive = false;
+            startStopBtn.textContent = "카메라 시작";
+            startStopBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
+            startStopBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+            videoWrapper.classList.remove('camera-active');
+            videoWrapper.classList.add('camera-inactive');
+            categoryPredictionElement.className = 'text-3xl font-extrabold mb-3 text-center transition-colors duration-500 rounded-lg p-3 unknown';
+            categoryPredictionElement.textContent = "카메라가 중지되었습니다.";
+            feedbackElement.textContent = "카메라를 다시 시작해 주세요.";
+        }
+        
+        // 내장 웹캠 시작 로직
+        function startInternalWebcam() {
+            statusElement.textContent = "내장 웹캠 접근 요청 중...";
+            navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        overlayCanvas.width = video.videoWidth;
+                        overlayCanvas.height = video.videoHeight;
+                        isCameraActive = true;
+                        startStopBtn.textContent = "카메라 중지";
+                        startStopBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                        startStopBtn.classList.add('bg-red-600', 'hover:bg-red-700');
+                        videoWrapper.classList.add('camera-active');
+                        videoWrapper.classList.remove('camera-inactive');
+                        statusElement.textContent = "✅ 내장 웹캠 스트리밍 시작.";
+                        runDetection();
+                    };
+                })
+                .catch(err => {
+                    console.error("웹캠 접근 오류:", err);
+                    statusElement.textContent = "❌ 웹캠 접근 권한이 필요하거나, 브라우저가 지원하지 않습니다.";
+                });
+        }
+        
+        // IP 카메라 URL 시작 로직 (Warning: CORS/HTTPS 문제 발생 가능)
+        function startStreamFromUrl(url) {
+            statusElement.textContent = `IP 카메라 URL (${url})로 시도 중... (CORS 문제 발생 가능)`;
+            video.srcObject = null;
+            video.src = url;
+            video.onloadedmetadata = () => {
+                video.play();
+                overlayCanvas.width = video.videoWidth || 640;
+                overlayCanvas.height = video.videoHeight || 480;
+                isCameraActive = true;
+                startStopBtn.textContent = "카메라 중지";
+                startStopBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                startStopBtn.classList.add('bg-red-600', 'hover:bg-red-700');
+                videoWrapper.classList.add('camera-active');
+                videoWrapper.classList.remove('camera-inactive');
+                statusElement.textContent = "✅ IP 카메라 스트리밍 시작 시도.";
+                runDetection();
+            };
+            video.onerror = () => {
+                statusElement.textContent = `❌ URL 로드 실패: ${url}. 보안/CORS/네트워크 문제일 수 있습니다.`;
+                stopStream();
+            };
+        }
 
-        // --- 4. 실시간 감정 인식 루프 ---
+        // --- 6. 실시간 감정 인식 루프 ---
         async function runDetection() {
-            if (video.paused || video.ended || !model) {
+            if (video.paused || video.ended || !model || !isCameraActive) {
                 return;
             }
 
@@ -155,68 +265,84 @@
             ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
             ctx.drawImage(video, 0, 0, overlayCanvas.width, overlayCanvas.height);
 
-            // ⚠️ 주의: 이 단계에서는 간단화를 위해 얼굴 검출(Face Detection) 없이 전체 프레임을 처리합니다.
-            // 실제 사용을 위해서는 Face-api.js 또는 MTCNN 구현이 필요합니다.
-
-            // --- 감정 분석 ---
             tf.tidy(() => {
                 // 1. 이미지 전처리: 48x48 흑백, 정규화
                 const tensor = tf.browser.fromPixels(overlayCanvas)
-                    .mean(2) // 흑백 변환 (RGB 평균)
-                    .expandDims(2) // 채널 차원 (48, 48, 1) 추가
-                    .resizeBilinear([48, 48]) // 48x48로 리사이즈
-                    .expandDims(0) // 배치 차원 (1, 48, 48, 1) 추가
-                    .div(255.0); // 픽셀 정규화
+                    .mean(2)
+                    .expandDims(2)
+                    .resizeBilinear([48, 48])
+                    .expandDims(0)
+                    .div(255.0);
                 
                 // 2. 예측
                 const predictions = model.predict(tensor);
                 
-                // 3. 결과 해석
+                // 3. 결과 해석 (7-클래스)
                 const scores = predictions.dataSync();
                 const predictedClass = predictions.argMax(-1).dataSync()[0];
                 const maxConfidence = scores[predictedClass];
+                const emotionName7 = EMOTIONS_7_CLASS[predictedClass];
+
+                let currentCategory, result;
+
+                if (maxConfidence < CONFIDENCE_THRESHOLD) {
+                    // 4. [중요 수정] 신뢰도가 낮으면 Unknown으로 분류 (임의 분류 방지)
+                    currentCategory = 'Unknown';
+                    result = { 
+                        label: '🤔 감정 미확인 (Unknown)', 
+                        category: 'unknown', 
+                        feedback: '신뢰도가 낮거나 얼굴이 명확하지 않습니다. 자세를 조정해주세요.', 
+                        color: '#6B7280' 
+                    };
+                } else {
+                    // 4-1. 3-카테고리 매핑 및 피드백 추출
+                    result = CATEGORY_MAP[emotionName7];
+                    currentCategory = result.category;
+                }
+
+                // 5. 피드백 및 알림 (상태 변화 시)
+                if (currentCategory === 'negative' && lastCategory !== 'negative') {
+                    // 부정적 상태로 전환 시에만 알림
+                    playNegativeFeedback();
+                }
+                lastCategory = currentCategory;
+
+                // 6. UI 업데이트
+                categoryPredictionElement.className = 'text-3xl font-extrabold mb-3 text-center transition-colors duration-500 rounded-lg p-3';
+                categoryPredictionElement.classList.add(result.category);
+                categoryPredictionElement.textContent = result.label;
                 
-                // 4. UI 업데이트
-                predictionElement.textContent = EMOTIONS[predictedClass];
-                confidenceElement.textContent = `신뢰도: ${(maxConfidence * 100).toFixed(2)}%`;
+                feedbackElement.textContent = result.feedback;
+                confidenceElement.textContent = `신뢰도: ${(maxConfidence * 100).toFixed(2)}% (원본: ${emotionName7})`;
                 
-                // 5. 시각화 (임의의 얼굴 위치에 경계 상자 표시 - 검출기 없으므로 중앙 가정)
-                drawPredictionBox(predictedClass, maxConfidence);
+                // 7. 시각화
+                drawPredictionBox(result.color, emotionName7);
             });
 
-            // 다음 프레임 요청
-            requestAnimationFrame(runDetection);
+            animationFrameId = requestAnimationFrame(runDetection);
         }
 
-        // --- 5. 예측 결과 시각화 (임의의 중앙 박스) ---
-        function drawPredictionBox(predictedClass, confidence) {
+        // --- 7. 예측 결과 시각화 ---
+        function drawPredictionBox(color, emotionName7) {
             const size = Math.min(overlayCanvas.width, overlayCanvas.height) * 0.5;
             const x = (overlayCanvas.width - size) / 2;
             const y = (overlayCanvas.height - size) / 2;
-            const emotionName = EMOTIONS[predictedClass];
 
-            // 경계 상자
-            ctx.strokeStyle = (confidence > 0.5) ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 165, 0, 0.8)';
-            ctx.lineWidth = 3;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
             ctx.strokeRect(x, y, size, size);
 
-            // 감정 텍스트 배경
-            ctx.fillStyle = ctx.strokeStyle;
-            ctx.fillRect(x, y - 30, size, 30);
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y - 35, size, 35);
 
-            // 감정 텍스트
             ctx.fillStyle = 'white';
-            ctx.font = '20px Inter';
-            ctx.fillText(emotionName, x + 5, y - 8);
+            ctx.font = '22px Inter';
+            ctx.fillText(emotionName7, x + 5, y - 12);
         }
 
-        // --- 초기화 ---
+        // --- 이벤트 리스너 및 초기화 ---
+        startStopBtn.addEventListener('click', toggleCameraStream);
         window.onload = loadModel;
     </script>
 </body>
-</html>model = await tf.loadLayersModel('tfjs_model/model.json');
-// 웹캠을 켜고 스트림을 비디오 요소에 연결합니다.
-navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
-// ...
-// 웹캠의 각 프레임을 모델에 넣어 감정을 예측하는 루프입니다.
-requestAnimationFrame(runDetection);
+</html>
