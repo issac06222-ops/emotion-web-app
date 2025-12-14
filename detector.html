@@ -105,7 +105,7 @@
         ];
         
         // --- 2. 7-클래스를 3-카테고리로 매핑 및 피드백 정의 ---
-        // 0.35 미만 신뢰도는 'Unknown'으로 처리되어 강제적인 '중립' 분류를 막습니다. (0.50에서 0.35로 수정)
+        // 0.35 미만 신뢰도는 'Unknown'으로 처리되어 강제적인 '중립' 분류를 막습니다. 
         const CONFIDENCE_THRESHOLD = 0.35; 
 
         const CATEGORY_MAP = {
@@ -120,4 +120,230 @@
 
         // --- 3. 피드백 (진동 & 음향) 기능 ---
         function playNegativeFeedback() {
-            // A. 진
+            // A. 진동 피드백 (모바일 기기에서만 작동)
+            if (navigator.vibrate) {
+                // 짧게 3번 진동 (100ms on, 50ms off)
+                navigator.vibrate([100, 50, 100, 50, 100]);
+            }
+            
+            // B. 음향 피드백 (Web Audio API - 순수 JavaScript로 생성)
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.type = 'sine'; // 사인파 (부드러운 소리)
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // 440 Hz (라 음)
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime); // 볼륨 50%
+            
+            oscillator.start();
+            
+            // 0.3초 후에 소리 끄기
+            setTimeout(() => {
+                oscillator.stop();
+            }, 300);
+        }
+
+        // --- 4. 모델 로드 ---
+        async function loadModel() {
+            statusElement.textContent = "모델 로딩 중: tfjs_model/model.json";
+            try {
+                model = await tf.loadLayersModel('tfjs_model/model.json');
+                statusElement.textContent = "✅ 모델 로드 성공! 카메라를 시작해 주세요.";
+                statusElement.classList.remove('bg-blue-100');
+                statusElement.classList.add('bg-green-100', 'text-green-700');
+            } catch (error) {
+                console.error("모델 로드 실패:", error);
+                statusElement.textContent = "❌ 모델 로드 실패. 'tfjs_model' 폴더와 model.json 경로를 확인하세요.";
+                statusElement.classList.remove('bg-blue-100');
+                statusElement.classList.add('bg-red-100', 'text-red-700');
+            }
+        }
+
+        // --- 5. 카메라 스트림 시작/중지 토글 ---
+        function toggleCameraStream() {
+            if (isCameraActive) {
+                stopStream();
+            } else {
+                const url = cameraUrlInput.value.trim();
+                if (url) {
+                    startStreamFromUrl(url); // IP 카메라 URL 사용
+                } else {
+                    startInternalWebcam(); // 내장 카메라 사용
+                }
+            }
+        }
+        
+        function stopStream() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+            } else if (video.src) {
+                video.src = ''; // IP 카메라 이미지 스트림 중지
+            }
+            isCameraActive = false;
+            startStopBtn.textContent = "카메라 시작";
+            startStopBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
+            startStopBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+            videoWrapper.classList.remove('camera-active');
+            videoWrapper.classList.add('camera-inactive');
+            categoryPredictionElement.className = 'text-3xl font-extrabold mb-3 text-center transition-colors duration-500 rounded-lg p-3 unknown';
+            categoryPredictionElement.textContent = "카메라가 중지되었습니다.";
+            feedbackElement.textContent = "카메라를 다시 시작해 주세요.";
+        }
+        
+        // 내장 웹캠 시작 로직
+        function startInternalWebcam() {
+            statusElement.textContent = "내장 웹캠 접근 요청 중...";
+            navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        overlayCanvas.width = video.videoWidth;
+                        overlayCanvas.height = video.videoHeight;
+                        isCameraActive = true;
+                        startStopBtn.textContent = "카메라 중지";
+                        startStopBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                        startStopBtn.classList.add('bg-red-600', 'hover:bg-red-700');
+                        videoWrapper.classList.add('camera-active');
+                        videoWrapper.classList.remove('camera-inactive');
+                        statusElement.textContent = "✅ 내장 웹캠 스트리밍 시작.";
+                        runDetection();
+                    };
+                })
+                .catch(err => {
+                    console.error("웹캠 접근 오류:", err);
+                    statusElement.textContent = "❌ 웹캠 접근 권한이 필요하거나, 브라우저가 지원하지 않습니다.";
+                });
+        }
+        
+        // IP 카메라 URL 시작 로직 (Warning: CORS/HTTPS 문제 발생 가능)
+        function startStreamFromUrl(url) {
+            statusElement.textContent = `IP 카메라 URL (${url})로 시도 중... (CORS 문제 발생 가능)`;
+            video.srcObject = null;
+            video.src = url;
+            video.onloadedmetadata = () => {
+                video.play();
+                overlayCanvas.width = video.videoWidth || 640;
+                overlayCanvas.height = video.videoHeight || 480;
+                isCameraActive = true;
+                startStopBtn.textContent = "카메라 중지";
+                startStopBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                startStopBtn.classList.add('bg-red-600', 'hover:bg-red-700');
+                videoWrapper.classList.add('camera-active');
+                videoWrapper.classList.remove('camera-inactive');
+                statusElement.textContent = "✅ IP 카메라 스트리밍 시작 시도.";
+                runDetection();
+            };
+            video.onerror = () => {
+                statusElement.textContent = `❌ URL 로드 실패: ${url}. 보안/CORS/네트워크 문제일 수 있습니다.`;
+                stopStream();
+            };
+        }
+
+        // --- 6. 실시간 감정 인식 루프 ---
+        async function runDetection() {
+            if (video.paused || video.ended || !model || !isCameraActive) {
+                return;
+            }
+
+            // FPS 계산
+            const currentTime = performance.now();
+            const elapsed = currentTime - lastTime;
+            const fps = (1000 / elapsed).toFixed(1);
+            lastTime = currentTime;
+            fpsElement.textContent = `FPS: ${fps}`;
+
+            // 캔버스에 웹캠 프레임 그리기
+            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            ctx.drawImage(video, 0, 0, overlayCanvas.width, overlayCanvas.height);
+
+            tf.tidy(() => {
+                // 1. 이미지 전처리: 48x48 흑백, 정규화
+                const tensor = tf.browser.fromPixels(overlayCanvas)
+                    .mean(2)
+                    .expandDims(2)
+                    .resizeBilinear([48, 48])
+                    .expandDims(0)
+                    .div(255.0);
+                
+                // 2. 예측
+                const predictions = model.predict(tensor);
+                
+                // 3. 결과 해석 (7-클래스)
+                const scores = predictions.dataSync();
+                const predictedClass = predictions.argMax(-1).dataSync()[0];
+                const maxConfidence = scores[predictedClass];
+                const emotionName7 = EMOTIONS_7_CLASS[predictedClass];
+
+                let currentCategory, result;
+
+                if (maxConfidence < CONFIDENCE_THRESHOLD) {
+                    // 4. [중요 수정] 신뢰도가 낮으면 Unknown으로 분류 (임의 분류 방지)
+                    currentCategory = 'Unknown';
+                    result = { 
+                        label: '🤔 감정 미확인 (Unknown)', 
+                        category: 'unknown', 
+                        feedback: '신뢰도가 낮거나 얼굴이 명확하지 않습니다. 자세를 조정해주세요.', 
+                        color: '#6B7280' 
+                    };
+                } else {
+                    // 4-1. 3-카테고리 매핑 및 피드백 추출
+                    result = CATEGORY_MAP[emotionName7];
+                    currentCategory = result.category;
+                }
+
+                // 5. 피드백 및 알림 (상태 변화 시)
+                if (currentCategory === 'negative' && lastCategory !== 'negative') {
+                    // 부정적 상태로 전환 시에만 알림
+                    playNegativeFeedback();
+                }
+                lastCategory = currentCategory;
+
+                // 6. UI 업데이트
+                categoryPredictionElement.className = 'text-3xl font-extrabold mb-3 text-center transition-colors duration-500 rounded-lg p-3';
+                categoryPredictionElement.classList.add(result.category);
+                categoryPredictionElement.textContent = result.label;
+                
+                // [수정] 신뢰도 표시에서 7-클래스 원본 이름 대신 3-카테고리 종류만 표시
+                confidenceElement.textContent = `신뢰도: ${(maxConfidence * 100).toFixed(2)}% (최종: ${result.category.toUpperCase()})`; 
+                
+                // 7. 시각화: 7클래스 이름 대신 3-카테고리 레이블을 전달
+                drawPredictionBox(result.color, result.label);
+            });
+
+            animationFrameId = requestAnimationFrame(runDetection);
+        }
+
+        // --- 7. 예측 결과 시각화 ---
+        function drawPredictionBox(color, categoryLabel) { // 매개변수 이름을 categoryLabel로 변경
+            const size = Math.min(overlayCanvas.width, overlayCanvas.height) * 0.5;
+            const x = (overlayCanvas.width - size) / 2;
+            const y = (overlayCanvas.height - size) / 2;
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
+            ctx.strokeRect(x, y, size, size);
+
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y - 35, size, 35);
+
+            ctx.fillStyle = 'white';
+            ctx.font = '22px Inter';
+            // [수정] 7-클래스 대신 3-카테고리 레이블(예: '😊 긍정 (Positive)')을 표시
+            ctx.fillText(categoryLabel, x + 5, y - 12); 
+        }
+
+        // --- 이벤트 리스너 및 초기화 ---
+        startStopBtn.addEventListener('click', toggleCameraStream);
+        window.onload = loadModel;
+    </script>
+</body>
+</html>
