@@ -1,0 +1,9 @@
+// 이 스크립트로 웹 브라우저가 AI 모델을 실행할 수 있게 됩니다.
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.13.0/dist/tf.min.js"></script>
+// 이 함수가 변환된 모델 파일을 로드합니다.
+model = await tf.loadLayersModel('tfjs_model/model.json');
+// 웹캠을 켜고 스트림을 비디오 요소에 연결합니다.
+navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+// ...
+// 웹캠의 각 프레임을 모델에 넣어 감정을 예측하는 루프입니다.
+requestAnimationFrame(runDetection);
