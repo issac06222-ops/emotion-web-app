@@ -312,18 +312,18 @@
                 categoryPredictionElement.classList.add(result.category);
                 categoryPredictionElement.textContent = result.label;
                 
-                feedbackElement.textContent = result.feedback;
-                confidenceElement.textContent = `신뢰도: ${(maxConfidence * 100).toFixed(2)}% (원본: ${emotionName7})`;
+                // [수정] 신뢰도 표시에서 7-클래스 원본 이름 대신 3-카테고리 종류만 표시
+                confidenceElement.textContent = `신뢰도: ${(maxConfidence * 100).toFixed(2)}% (최종: ${result.category.toUpperCase()})`; 
                 
-                // 7. 시각화
-                drawPredictionBox(result.color, emotionName7);
+                // 7. 시각화: 7클래스 이름 대신 3-카테고리 레이블을 전달
+                drawPredictionBox(result.color, result.label);
             });
 
             animationFrameId = requestAnimationFrame(runDetection);
         }
 
         // --- 7. 예측 결과 시각화 ---
-        function drawPredictionBox(color, emotionName7) {
+        function drawPredictionBox(color, categoryLabel) { // 매개변수 이름을 categoryLabel로 변경
             const size = Math.min(overlayCanvas.width, overlayCanvas.height) * 0.5;
             const x = (overlayCanvas.width - size) / 2;
             const y = (overlayCanvas.height - size) / 2;
@@ -337,7 +337,8 @@
 
             ctx.fillStyle = 'white';
             ctx.font = '22px Inter';
-            ctx.fillText(emotionName7, x + 5, y - 12);
+            // [수정] 7-클래스 대신 3-카테고리 레이블(예: '😊 긍정 (Positive)')을 표시
+            ctx.fillText(categoryLabel, x + 5, y - 12); 
         }
 
         // --- 이벤트 리스너 및 초기화 ---
