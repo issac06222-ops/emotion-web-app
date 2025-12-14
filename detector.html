@@ -96,7 +96,8 @@
         let lastTime = performance.now();
         let animationFrameId = null;
         let isCameraActive = false;
-        let lastCategory = 'Unknown'; // 진동/음향 피드백을 위한 상태 추적
+        let lastCategory = 'Unknown'; 
+        const CONFIDENCE_THRESHOLD = 0.38; // 0.35 -> 0.38로 변경됨
 
         // --- 1. 7-클래스 감정 레이블 정의 ---
         const EMOTIONS_7_CLASS = [
@@ -105,9 +106,6 @@
         ];
         
         // --- 2. 7-클래스를 3-카테고리로 매핑 및 피드백 정의 ---
-        // 0.35 미만 신뢰도는 'Unknown'으로 처리되어 강제적인 '중립' 분류를 막습니다. 
-        const CONFIDENCE_THRESHOLD = 0.35; 
-
         const CATEGORY_MAP = {
             'Happy': { label: '😊 긍정 (Positive)', category: 'positive', feedback: '매우 좋습니다! 지금처럼 긍정적인 상태를 유지하며 집중하세요.', color: '#10B981' },
             'Surprise': { label: '😊 긍정 (Positive)', category: 'positive', feedback: '놀라움은 긍정적인 흥미의 신호일 수 있습니다. 학습에 열중하고 계시군요!', color: '#10B981' },
@@ -120,13 +118,10 @@
 
         // --- 3. 피드백 (진동 & 음향) 기능 ---
         function playNegativeFeedback() {
-            // A. 진동 피드백 (모바일 기기에서만 작동)
             if (navigator.vibrate) {
-                // 짧게 3번 진동 (100ms on, 50ms off)
                 navigator.vibrate([100, 50, 100, 50, 100]);
             }
             
-            // B. 음향 피드백 (Web Audio API - 순수 JavaScript로 생성)
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const oscillator = audioCtx.createOscillator();
             const gainNode = audioCtx.createGain();
@@ -134,13 +129,12 @@
             oscillator.connect(gainNode);
             gainNode.connect(audioCtx.destination);
 
-            oscillator.type = 'sine'; // 사인파 (부드러운 소리)
-            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // 440 Hz (라 음)
-            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime); // 볼륨 50%
+            oscillator.type = 'sine'; 
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); 
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime); 
             
             oscillator.start();
             
-            // 0.3초 후에 소리 끄기
             setTimeout(() => {
                 oscillator.stop();
             }, 300);
@@ -148,15 +142,19 @@
 
         // --- 4. 모델 로드 ---
         async function loadModel() {
-            statusElement.textContent = "모델 로딩 중: tfjs_model/model.json";
+            const modelPath = 'tfjs_model/model.json';
+            statusElement.textContent = `모델 로딩 중: ${modelPath}`;
             try {
-                model = await tf.loadLayersModel('tfjs_model/model.json');
+                // 모델 로드 시도
+                model = await tf.loadLayersModel(modelPath);
+                
                 statusElement.textContent = "✅ 모델 로드 성공! 카메라를 시작해 주세요.";
-                statusElement.classList.remove('bg-blue-100');
+                statusElement.classList.remove('bg-blue-100', 'text-blue-700');
                 statusElement.classList.add('bg-green-100', 'text-green-700');
             } catch (error) {
-                console.error("모델 로드 실패:", error);
-                statusElement.textContent = "❌ 모델 로드 실패. 'tfjs_model' 폴더와 model.json 경로를 확인하세요.";
+                // 모델 로드 실패 시 구체적인 오류를 콘솔에 기록하고 사용자에게 안내
+                console.error("모델 로드 실패 (경로 오류, CORS 또는 파일 누락 가능성):", error);
+                statusElement.textContent = `❌ 모델 로드 실패. 경로: ${modelPath}. 콘솔(F12)을 확인하여 '404 Not Found' 또는 'CORS' 오류가 있는지 확인하세요.`;
                 statusElement.classList.remove('bg-blue-100');
                 statusElement.classList.add('bg-red-100', 'text-red-700');
             }
@@ -164,14 +162,21 @@
 
         // --- 5. 카메라 스트림 시작/중지 토글 ---
         function toggleCameraStream() {
+            if (!model) {
+                statusElement.textContent = "모델이 로드되지 않아 카메라를 시작할 수 없습니다. 모델 로드 오류를 해결해 주세요.";
+                statusElement.classList.remove('bg-green-100');
+                statusElement.classList.add('bg-red-100', 'text-red-700');
+                return;
+            }
+
             if (isCameraActive) {
                 stopStream();
             } else {
                 const url = cameraUrlInput.value.trim();
                 if (url) {
-                    startStreamFromUrl(url); // IP 카메라 URL 사용
+                    startStreamFromUrl(url); 
                 } else {
-                    startInternalWebcam(); // 내장 카메라 사용
+                    startInternalWebcam(); 
                 }
             }
         }
@@ -185,10 +190,10 @@
                 video.srcObject.getTracks().forEach(track => track.stop());
                 video.srcObject = null;
             } else if (video.src) {
-                video.src = ''; // IP 카메라 이미지 스트림 중지
+                video.src = ''; 
             }
             isCameraActive = false;
-            startStopBtn.textContent = "카메라 시작";
+            startStopBtn.textContent = "내장 카메라 시작";
             startStopBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
             startStopBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
             videoWrapper.classList.remove('camera-active');
@@ -224,7 +229,7 @@
                 });
         }
         
-        // IP 카메라 URL 시작 로직 (Warning: CORS/HTTPS 문제 발생 가능)
+        // IP 카메라 URL 시작 로직 
         function startStreamFromUrl(url) {
             statusElement.textContent = `IP 카메라 URL (${url})로 시도 중... (CORS 문제 발생 가능)`;
             video.srcObject = null;
@@ -286,7 +291,7 @@
                 let currentCategory, result;
 
                 if (maxConfidence < CONFIDENCE_THRESHOLD) {
-                    // 4. [중요 수정] 신뢰도가 낮으면 Unknown으로 분류 (임의 분류 방지)
+                    // 4. 신뢰도가 낮으면 Unknown으로 분류
                     currentCategory = 'Unknown';
                     result = { 
                         label: '🤔 감정 미확인 (Unknown)', 
@@ -302,7 +307,6 @@
 
                 // 5. 피드백 및 알림 (상태 변화 시)
                 if (currentCategory === 'negative' && lastCategory !== 'negative') {
-                    // 부정적 상태로 전환 시에만 알림
                     playNegativeFeedback();
                 }
                 lastCategory = currentCategory;
@@ -312,10 +316,9 @@
                 categoryPredictionElement.classList.add(result.category);
                 categoryPredictionElement.textContent = result.label;
                 
-                // [수정] 신뢰도 표시에서 7-클래스 원본 이름 대신 3-카테고리 종류만 표시
                 confidenceElement.textContent = `신뢰도: ${(maxConfidence * 100).toFixed(2)}% (최종: ${result.category.toUpperCase()})`; 
                 
-                // 7. 시각화: 7클래스 이름 대신 3-카테고리 레이블을 전달
+                // 7. 시각화
                 drawPredictionBox(result.color, result.label);
             });
 
@@ -323,7 +326,7 @@
         }
 
         // --- 7. 예측 결과 시각화 ---
-        function drawPredictionBox(color, categoryLabel) { // 매개변수 이름을 categoryLabel로 변경
+        function drawPredictionBox(color, categoryLabel) { 
             const size = Math.min(overlayCanvas.width, overlayCanvas.height) * 0.5;
             const x = (overlayCanvas.width - size) / 2;
             const y = (overlayCanvas.height - size) / 2;
@@ -337,7 +340,6 @@
 
             ctx.fillStyle = 'white';
             ctx.font = '22px Inter';
-            // [수정] 7-클래스 대신 3-카테고리 레이블(예: '😊 긍정 (Positive)')을 표시
             ctx.fillText(categoryLabel, x + 5, y - 12); 
         }
 
