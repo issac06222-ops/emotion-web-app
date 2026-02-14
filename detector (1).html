@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실시간 감정 & rPPG 모니터링</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-main: #f8fafc;
+            --accent-color: #38bdf8;
+        }
+
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .header {
+            width: 100%;
+            padding: 1.5rem;
+            text-align: center;
+            background-color: var(--card-bg);
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+
+        .container {
+            max-width: 800px;
+            width: 95%;
+            margin-top: 2rem;
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+
+        .status-item {
+            text-align: center;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 0.5rem;
+        }
+
+        .status-label {
+            font-size: 0.875rem;
+            color: #94a3b8;
+            margin-bottom: 0.5rem;
+        }
+
+        .status-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent-color);
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+
+        .log-box {
+            font-family: monospace;
+            font-size: 0.75rem;
+            height: 100px;
+            overflow-y: auto;
+            background: #000;
+            color: #22c55e;
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>심박수 및 감정 모니터링</h1>
+</div>
+
+<div class="container">
+    <!-- 실시간 상태 카드 -->
+    <div class="card">
+        <div class="status-grid">
+            <div class="status-item">
+                <div class="status-label">현재 감정</div>
+                <div id="emotion-val" class="status-value">-</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">심박수 (BPM)</div>
+                <div id="bpm-val" class="status-value">0</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">대상 거리</div>
+                <div id="distance-val" class="status-value">-</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 그래프 카드 -->
+    <div class="card">
+        <h3>실시간 rPPG 심박수 변화</h3>
+        <div class="chart-container">
+            <canvas id="bpmChart"></canvas>
+        </div>
+    </div>
+
+    <!-- 통신 로그 -->
+    <div class="card">
+        <div class="status-label">통신 로그</div>
+        <div id="log" class="log-box">서버 연결 대기 중...</div>
+    </div>
+</div>
+
+<script>
+    const logElement = document.getElementById('log');
+    const bpmValElement = document.getElementById('bpm-val');
+    const emotionElement = document.getElementById('emotion-val');
+    const distanceElement = document.getElementById('distance-val');
+
+    // 그래프 설정
+    const ctx = document.getElementById('bpmChart').getContext('2d');
+    const bpmData = {
+        labels: [],
+        datasets: [{
+            label: '실시간 BPM',
+            data: [],
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56, 189, 248, 0.2)',
+            borderWidth: 2,
+            tension: 0.4,
+            fill: true
+        }]
+    };
+
+    const config = {
+        type: 'line',
+        data: bpmData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: { min: 40, max: 120 },
+                x: { display: false }
+            },
+            animation: false
+        }
+    };
+
+    const bpmChart = new Chart(ctx, config);
+
+    // 로그 업데이트 함수
+    function updateLog(msg) {
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString();
+        logElement.innerHTML = `[${timeStr}] ${msg}<br>` + logElement.innerHTML;
+    }
+
+    // 소켓 통신 설정 (Python detector.py와 연결)
+    // 참고: 브라우저 보안 정책상 표준 Socket(TCP)을 직접 열기 어려우므로 
+    // 실제 배포 시에는 WebSocket 서버를 통과시키거나, 로컬 테스트용 프록시가 필요할 수 있습니다.
+    // 여기서는 개념 증명을 위해 WebSocket 구조로 작성합니다.
+    const socket = new WebSocket('ws://localhost:8080'); // 실제 환경에 맞게 조정
+
+    socket.onopen = () => updateLog("✅ 서버에 연결되었습니다.");
+    socket.onclose = () => updateLog("❌ 서버 연결이 종료되었습니다.");
+    socket.onerror = (err) => updateLog("⚠️ 연결 오류가 발생했습니다.");
+
+    socket.onmessage = (event) => {
+        try {
+            // 수신 데이터 포맷: Index|Emotion|Distance|Direction|BPM
+            const rawData = event.data;
+            const parts = rawData.split('|');
+
+            if (parts.length >= 5) {
+                const emotion = parts[1];
+                const distance = parts[2];
+                const bpm = parseFloat(parts[4]);
+
+                // UI 업데이트
+                emotionElement.innerText = emotion;
+                distanceElement.innerText = distance;
+                bpmValElement.innerText = bpm.toFixed(1);
+
+                // 그래프 업데이트
+                const now = new Date().toLocaleTimeString();
+                bpmData.labels.push(now);
+                bpmData.datasets[0].data.push(bpm);
+
+                // 최근 20개 데이터만 유지
+                if (bpmData.labels.length > 20) {
+                    bpmData.labels.shift();
+                    bpmData.datasets[0].data.shift();
+                }
+
+                bpmChart.update();
+            }
+        } catch (e) {
+            console.error("데이터 파싱 오류:", e);
+        }
+    };
+
+    // 테스트용: 서버가 없을 때 가상으로 작동 확인하려면 아래 주석을 해제하세요.
+    /*
+    setInterval(() => {
+        const mockBpm = 70 + Math.random() * 10;
+        const mockEvent = { data: `0|긍정|가까이|정면|${mockBpm}` };
+        socket.onmessage(mockEvent);
+    }, 1000);
+    */
+</script>
+
+</body>
+</html>
